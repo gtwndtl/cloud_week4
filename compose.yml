@@ -12,22 +12,32 @@ services:
       RABBITMQ_DEFAULT_PASS: guest
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - mynetwork
 
   prometheus:
     image: prom/prometheus
     container_name: prometheus
+    restart: unless-stopped
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--web.external-url=/prometheus/'
+      - '--web.route-prefix=/'
     ports:
       - "9090:9090"
+    networks:
+      - mynetwork
+    
 
   pushgateway:
     image: prom/pushgateway
     container_name: pushgateway
     ports:
       - "9091:9091"
+    networks:
+      - mynetwork
 
   grafana:
     image: grafana/grafana
@@ -35,10 +45,113 @@ services:
     ports:
       - "3000:3000"
     environment:
+      - GF_SERVER_ROOT_URL=http://localhost/grafana/
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
       - grafana_data:/var/lib/grafana
-      
+    networks:
+      - mynetwork
+
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: mydatabase
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - mynetwork
+
+  backend:
+    build: ./backend
+    container_name: backend
+    restart: always
+    depends_on:
+      - postgres
+      - rabbitmq  # ให้ backend เริ่มหลังจาก RabbitMQ พร้อม
+    ports:
+      - "8000:8000"
+    environment:
+      DB_HOST: "postgres"  # เชื่อมต่อกับ PostgreSQL ใน Docker
+      DB_USER: "postgres"
+      DB_PASSWORD: "admin"
+      DB_NAME: "mydatabase"
+      DB_PORT: "5432"
+      RABBITMQ_HOST: "rabbitmq"  # เชื่อมต่อกับ RabbitMQ ใน Docker
+    networks:
+      - mynetwork
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    restart: always
+    depends_on:
+      - backend
+      - nginx
+    ports:
+      - "5173:5173"
+    networks:
+      - mynetwork
+
+  send_task:
+    build: ./python  # ใช้ Dockerfile ในโฟลเดอร์ python
+    container_name: send_task
+    depends_on:
+      - rabbitmq
+      - postgres
+      - backend
+      - frontend
+    environment:
+      RABBITMQ_HOST: "rabbitmq"
+      DB_HOST: "postgres"
+    networks:
+      - mynetwork
+    command: ["python", "send_task.py"]
+
+  collector:
+    build: ./python
+    container_name: collector
+    environment:
+      RABBITMQ_HOST: "rabbitmq"
+      DB_HOST: "postgres"
+    depends_on:
+      - rabbitmq
+    networks:
+      - mynetwork
+    command: ["python", "collector.py"]
+
+  worker:
+    build: ./python
+    container_name: worker
+    environment:
+      RABBITMQ_HOST: "rabbitmq"
+      DB_HOST: "postgres"
+    depends_on:
+      - rabbitmq
+    networks:
+      - mynetwork
+    command: ["python", "worker.py"]
+  nginx:
+    build: ./api-gateway
+    container_name: nginx
+    restart: always
+    ports:
+      - "80:80"
+  
+    networks:
+      - mynetwork
+
+
 volumes:
   rabbitmq_data:
   grafana_data:
+  pg_data:
+
+networks:
+  mynetwork:
+    driver: bridge

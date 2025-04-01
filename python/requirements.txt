@@ -1,0 +1,4 @@
+psycopg2-binary==2.9.3
+pika==1.2.0
+prometheus_client==0.14.1
+python-dotenv==0.19.2

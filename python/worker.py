@@ -3,14 +3,15 @@ import time
 import random
 import socket
 from prometheus_client import CollectorRegistry, Counter, Gauge, push_to_gateway
+import os
 
-# Configurations
-RABBITMQ_HOST = "localhost"
-PUSHGATEWAY_URL = "http://localhost:9091"
+# การตั้งค่าเชื่อมต่อ RabbitMQ และ Pushgateway
+RABBITMQ_HOST = "rabbitmq"  # ชื่อของ RabbitMQ service ใน Docker
+PUSHGATEWAY_URL = "http://nginx/pushgateway/"  # เปลี่ยนจาก localhost เป็น pushgateway
 WORKER_ID = f"Worker-{random.randint(1, 100)}"
 HOSTNAME = socket.gethostname()
 
-# Create Prometheus Registry
+# สร้าง Prometheus Registry
 registry = CollectorRegistry()
 TASKS_COMPLETED = Counter('worker_tasks_completed', 'Total tasks completed', registry=registry)
 TASK_DURATION = Gauge('worker_task_duration_seconds', 'Duration of last task in seconds', registry=registry)
@@ -19,8 +20,19 @@ WORKER_UP = Gauge('worker_up', 'Worker status (1=up, 0=down)', ['hostname'], reg
 def push_metrics():
     push_to_gateway(PUSHGATEWAY_URL, job=WORKER_ID, registry=registry)
 
+# ฟังก์ชันสำหรับการเชื่อมต่อ RabbitMQ ที่มีการ retry
+def connect_rabbitmq():
+    while True:
+        try:
+            connection = pika.BlockingConnection(pika.ConnectionParameters(RABBITMQ_HOST))
+            print(f"✅ Connected to RabbitMQ: {RABBITMQ_HOST}")
+            return connection
+        except pika.exceptions.AMQPConnectionError:
+            print("⏳ Waiting for RabbitMQ...")
+            time.sleep(5)  # รอ 5 วินาที แล้วลองใหม่
+
 def process_task():
-    connection = pika.BlockingConnection(pika.ConnectionParameters(RABBITMQ_HOST))
+    connection = connect_rabbitmq()  # ใช้ฟังก์ชันเชื่อมต่อ RabbitMQ
     channel = connection.channel()
     channel.queue_declare(queue='task_queue', durable=True)
 
